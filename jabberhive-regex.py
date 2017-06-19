@@ -12,79 +12,96 @@ class ClientState:
     CLIENT_IS_TERMINATING = 4
 
 def client_main (source, params):
-
     pattern = re.compile(params.regex)
-
     state = ClientState.CLIENT_IS_CONNECTING
-    source_f = source.makefile(
-        mode='r',
-        buffering=True,
-        encoding="UTF-8",
-        newline='\n'
-    )
-
     t_connect = None
     f_connect = None
     current_target = None
 
-    while True:
-        if (state == ClientState.CLIENT_IS_SENDING_DOWNSTREAM):
-            up_data = source_f.readline()
+    try:
+        while True:
+            if (state == ClientState.CLIENT_IS_SENDING_DOWNSTREAM):
+                try:
+                    in_data = b""
 
-            if (pattern.match(up_data)):
-                if (t_connect != None):
-                    t_connect.send(up_data.encode())
-                    current_target = 't'
-                    state = ClientState.CLIENT_IS_SENDING_UPSTREAM
-                    print("[Matched] Sending upstream...")
+                    while True:
+                        in_char = source.recv(1)
+                        in_data = (in_data + in_char)
+
+                        if (in_char == b"\n"):
+                            break
+                        elif (in_char == b''):
+                            raise Exception("Disconnected client")
+
+                    up_data = in_data.decode("UTF-8")
+                    valid = 1
+                except UnicodeDecodeError:
+                    valid = 0
+
+                if ((valid == 1) and pattern.match(up_data)):
+                    if (t_connect != None):
+                        t_connect.sendall(in_data)
+                        current_target = 't'
+                        state = ClientState.CLIENT_IS_SENDING_UPSTREAM
+                        print("[Matched] Sending upstream...")
+                    else:
+                        source.send(b"!P \n")
+                        print("Matched")
                 else:
-                    source.send("!P \n".encode())
-                    print("Matched")
+                    if (f_connect != None):
+                        f_connect.sendall(in_data)
+                        current_target = 'f'
+                        state = ClientState.CLIENT_IS_SENDING_UPSTREAM
+                        print("[No match] Sending upstream...")
+                    else:
+                        source.sendall(b"!P \n")
+                        print("Did not match")
+            elif (state == ClientState.CLIENT_IS_SENDING_UPSTREAM):
+                matched = 0
+                c = b"\0"
+
+                while (c != b"\n"):
+                    print("67: sending upstream")
+                    if (current_target == 't'):
+                        c = t_connect.recv(1)
+                    else:
+                        c = f_connect.recv(1)
+
+                    source.send(c)
+
+                    if ((matched == 0) and (c == b"!")):
+                        matched = 1
+                    elif ((matched == 1) and ((c == b"P") or (c == b"N"))):
+                        matched = 2
+                    elif ((matched == 2) and (c == b" ")):
+                        print("Sending downstream...")
+                        state = ClientState.CLIENT_IS_SENDING_DOWNSTREAM
+                    else:
+                        matched = -1
+
+            elif (state == ClientState.CLIENT_IS_CONNECTING):
+                print("Connecting to downstream...")
+                if (params.destination_true != None):
+                    t_connect = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    t_connect.connect(params.destination_true)
+
+                if (params.destination_false != None):
+                    f_connect = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    f_connect.connect(params.destination_false)
+
+                print("Sending downstream...")
+                state = ClientState.CLIENT_IS_SENDING_DOWNSTREAM
             else:
-                if (f_connect != None):
-                    f_connect.send(up_data.encode())
-                    current_target = 'f'
-                    state = ClientState.CLIENT_IS_SENDING_UPSTREAM
-                    print("[No match] Sending upstream...")
-                else:
-                    source.send("!P \n".encode())
-                    print("Did not match")
-        elif (state == ClientState.CLIENT_IS_SENDING_UPSTREAM):
-            matched = 0
-            c = b"\0"
+                break
+    except:
+        print("Closing")
+        source.close()
 
-            while (c != b"\n"):
-                if (current_target == 't'):
-                    c = t_connect.recv(1)
-                else:
-                    c = f_connect.recv(1)
+        if (t_connect != None):
+            t_connect.close()
 
-                source.send(c)
-
-                if ((matched == 0) and (c == b"!")):
-                    matched = 1
-                elif ((matched == 1) and ((c == b"P") or (c == b"N"))):
-                    matched = 2
-                elif ((matched == 2) and (c == b" ")):
-                    print("Sending downstream...")
-                    state = ClientState.CLIENT_IS_SENDING_DOWNSTREAM
-                else:
-                    matched = -1
-
-        elif (state == ClientState.CLIENT_IS_CONNECTING):
-            print("Connecting to downstream...")
-            if (params.destination_true != None):
-                t_connect = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                t_connect.connect(params.destination_true)
-
-            if (params.destination_false != None):
-                f_connect = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                f_connect.connect(params.destination_false)
-
-            print("Sending downstream...")
-            state = ClientState.CLIENT_IS_SENDING_DOWNSTREAM
-        else:
-            break
+        if (f_connect != None):
+            f_connect.close()
 
 ################################################################################
 ## ARGUMENTS HANDLING ##########################################################
