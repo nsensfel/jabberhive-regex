@@ -40,7 +40,17 @@ def client_main (source, params):
 
                 if ((valid == 1) and pattern.match(up_data)):
                     if (t_connect != None):
-                        t_connect.sendall(in_data)
+                        if (params.replacement != None):
+                            print("Transformed \"" + up_data + "\"")
+                            up_data = re.sub(
+                                pattern,
+                                params.replacement,
+                                up_data
+                            )
+                            print("into \"" + up_data + "\"")
+                            t_connect.sendall(up_data.encode("UTF-8"))
+                        else:
+                            t_connect.sendall(in_data)
                         current_target = 't'
                         state = ClientState.CLIENT_IS_SENDING_UPSTREAM
                         print("[Matched] Sending upstream...")
@@ -61,7 +71,6 @@ def client_main (source, params):
                 c = b"\0"
 
                 while (c != b"\n"):
-                    print("67: sending upstream")
                     if (current_target == 't'):
                         c = t_connect.recv(1)
                     else:
@@ -141,6 +150,14 @@ parser.add_argument(
     type = str,
     required = True,
     help = 'The regex to test the message against.',
+)
+
+parser.add_argument(
+    '-x',
+    '--replacement',
+    type = str,
+    required = False,
+    help = 'The transformation regex to be applied',
 )
 
 args = parser.parse_args()
